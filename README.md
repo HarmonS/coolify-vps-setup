@@ -1,6 +1,3 @@
-# coolify-vps-setup
-Interactive, modular Ubuntu VPS hardening script optimized for Coolify, featuring UFW-Docker, ClamAV, and automated maintenance.
-
 # 🚀 Coolify VPS Setup
 
 An interactive, modular shell script to harden and prepare a fresh Ubuntu VPS for [Coolify](https://coolify.io). This script automates security best practices that Coolify doesn't handle by default, such as deep system hardening and automated malware scanning.
