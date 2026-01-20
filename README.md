@@ -16,7 +16,7 @@ An interactive, modular shell script to harden and prepare a fresh Ubuntu VPS fo
 ## 🛠️ Quick Start
 1. **Connect to your fresh VPS as root:**
    ```bash
-   ssh root@your-server-ip
+   curl -sSL https://raw.githubusercontent.com/HarmonS/coolify-vps-setup/main/coolify-vps-setup.sh | bash
 
 ⚙️ Configuration Options
 During the interactive wizard, you can configure:
