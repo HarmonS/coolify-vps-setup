@@ -109,13 +109,24 @@ if confirm "Install Coolify now?"; then
     echo "--- Installing Coolify (this will install Docker) ---"
     curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
     
-    # NOW we apply the ufw-docker patch because Docker is installed
-    echo "--- Applying ufw-docker security patch ---"
-    sudo wget -O /usr/local/bin/ufw-docker https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker
-    sudo chmod +x /usr/local/bin/ufw-docker
-    sudo ufw-docker install
-    sudo ufw reload
-    echo "✅ Docker security patch applied."
+    # Wait for Docker to initialize and refresh the shell's command path
+    echo "--- Refreshing system paths ---"
+    sleep 5
+    hash -r 
+
+    # Check if Docker exists before running the patch
+    if command -v docker >/dev/null 2>&1; then
+        echo "--- Applying ufw-docker security patch ---"
+        sudo wget -O /usr/local/bin/ufw-docker https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker
+        sudo chmod +x /usr/local/bin/ufw-docker
+        
+        # Force the install even if the environment is still "warm"
+        sudo /usr/local/bin/ufw-docker install
+        sudo ufw reload
+        echo "✅ Docker security patch applied."
+    else
+        echo "⚠️ Docker not found yet. You may need to run 'sudo ufw-docker install' manually after reboot."
+    fi
 fi
 
 echo "--- Setup Finished! Rebooting in 10 seconds ---"
