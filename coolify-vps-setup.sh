@@ -1,5 +1,5 @@
 #!/bin/bash
-# coolify-vps-setup.sh - Two-Stage Interactive Setup
+# coolify-vps-setup.sh - Interactive Questions First, then Unattended Install
 
 set -euo pipefail
 
@@ -9,113 +9,113 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# --- HELPER FUNCTIONS ---
-get_input() {
-    local prompt=$1
-    local default=$2
-    read -p "$prompt [$default]: " val
-    echo "${val:-$default}"
-}
+# --- 1. COLLECT ALL INPUTS FIRST ---
+echo "--- 🛠️  Coolify Setup Configuration ---"
+echo "Please answer the following questions to begin the unattended install."
+echo ""
 
-confirm() {
-    local prompt=$1
-    read -p "$prompt (y/n): " res
-    [[ "$res" == "y" ]]
-}
+# Swap Setup
+WANT_SWAP=$(read -p "Configure a Swap file? (y/n) [y]: " res; echo "${res:-y}")
+SWAP_SIZE="2G"
+if [[ "$WANT_SWAP" == "y" ]]; then
+    read -p "  Enter Swap size (e.g., 2G, 4G) [2G]: " res
+    SWAP_SIZE="${res:-2G}"
+fi
 
-# --- 1. SWAP ---
-setup_swap() {
-    if confirm "Do you want to configure a Swap file?"; then
-        local swap_size=$(get_input "How much Swap? (e.g., 2G, 4G)" "2G")
-        if [ ! -f /swapfile ]; then
-            echo "--- Creating $swap_size Swap File ---"
-            sudo fallocate -l "$swap_size" /swapfile
-            sudo chmod 600 /swapfile
-            sudo mkswap /swapfile
-            sudo swapon /swapfile
-            echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-            sudo sysctl vm.swappiness=10
-            echo 'vm.swappiness=10' | sudo tee -a /etc/sysctl.conf
-            echo "✅ $swap_size Swap enabled."
-        fi
+# Firewall Setup
+WANT_FW=$(read -p "Configure Firewall (UFW) & Fail2ban? (y/n) [y]: " res; echo "${res:-y}")
+
+# ClamAV Setup
+WANT_CLAM=$(read -p "Install ClamAV Malware Scanner? (y/n) [y]: " res; echo "${res:-y}")
+CLAM_FREQ="1"
+if [[ "$WANT_CLAM" == "y" ]]; then
+    read -p "  Scan frequency? 1) Daily 2) Weekly [1]: " res
+    CLAM_FREQ="${res:-1}"
+fi
+
+# Coolify Install
+WANT_COOLIFY=$(read -p "Install Coolify now? (y/n) [y]: " res; echo "${res:-y}")
+
+echo ""
+echo "✅ All inputs received. Starting unattended installation..."
+echo "--------------------------------------------------------"
+
+# --- 2. SWAP ---
+if [[ "$WANT_SWAP" == "y" ]]; then
+    if [ ! -f /swapfile ]; then
+        echo "--- Creating $SWAP_SIZE Swap File ---"
+        fallocate -l "$SWAP_SIZE" /swapfile
+        chmod 600 /swapfile
+        mkswap /swapfile
+        swapon /swapfile
+        echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        sysctl vm.swappiness=10
+        echo 'vm.swappiness=10' >> /etc/sysctl.conf
     fi
-}
+fi
 
-# --- 2. FIREWALL & FAIL2BAN ---
-setup_ufw_basic() {
-    if confirm "Do you want to configure Firewall & Fail2ban?"; then
-        echo "--- Installing Security Tools ---"
-        sudo apt update && sudo apt install -y ufw wget fail2ban
-        sudo ufw default deny incoming
-        sudo ufw default allow outgoing
-        sudo ufw allow 22/tcp
-        sudo ufw allow 80/tcp
-        sudo ufw allow 443/tcp
-        sudo ufw allow 8000/tcp
-        sudo ufw allow 6001/tcp
-        sudo ufw allow 6002/tcp
-        sudo ufw --force enable
+# --- 3. FIREWALL & FAIL2BAN ---
+if [[ "$WANT_FW" == "y" ]]; then
+    echo "--- Installing Security Tools ---"
+    apt update && apt install -y ufw wget fail2ban
+    ufw default deny incoming
+    ufw default allow outgoing
+    ufw allow 22/tcp
+    ufw allow 80/tcp
+    ufw allow 443/tcp
+    ufw allow 8000/tcp
+    ufw allow 6001/tcp
+    ufw allow 6002/tcp
+    ufw --force enable
 
-        sudo cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
-        sudo sed -i 's/^bantime  = 10m/bantime  = 24h/' /etc/fail2ban/jail.local
-        sudo sed -i 's/^maxretry = 5/maxretry = 3/' /etc/fail2ban/jail.local
-        sudo systemctl restart fail2ban
-        echo "✅ Basic Firewall and Fail2ban secured."
-    fi
-}
+    cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
+    sed -i 's/^bantime  = 10m/bantime  = 24h/' /etc/fail2ban/jail.local
+    sed -i 's/^maxretry = 5/maxretry = 3/' /etc/fail2ban/jail.local
+    systemctl restart fail2ban
+fi
 
-# --- 3. MAINTENANCE & CLAMAV ---
-setup_maintenance_cron() {
-    echo "--- Configuring Maintenance & Cron Jobs ---"
-    local clam_cmd=""
-    if confirm "Do you want to install ClamAV?"; then
-        sudo apt install -y clamav clamav-daemon
-        sudo systemctl stop clamav-freshclam || true
-        sudo freshclam
-        sudo systemctl start clamav-freshclam
-        sudo systemctl enable clamav-daemon
-        sudo systemctl start clamav-daemon
-        local freq_choice=$(get_input "ClamAV Frequency? 1) Daily 2) Weekly" "1")
-        local clam_cron="0 3 * * *"
-        [[ "$freq_choice" == "2" ]] && clam_cron="0 3 * * 1"
-        clam_cmd="$clam_cron /usr/bin/clamdscan --fdpass -r / --exclude-dir='^/sys|^/proc|^/dev|^/var/lib/docker' -i --log=/var/log/clamav/daily_scan.log"
-    fi
-
-    sudo apt install -y unattended-upgrades update-notifier-common
+# --- 4. MAINTENANCE & CLAMAV ---
+echo "--- Configuring Maintenance & Updates ---"
+CLAM_CMD=""
+if [[ "$WANT_CLAM" == "y" ]]; then
+    apt install -y clamav clamav-daemon
+    systemctl stop clamav-freshclam || true
+    freshclam || true # || true in case of mirror timeouts
+    systemctl start clamav-freshclam
+    systemctl enable clamav-daemon
+    systemctl start clamav-daemon
     
-    CRON_MARKER="# EXPERT-VPS-SETUP"
-    tmpfile=$(mktemp)
-    crontab -l 2>/dev/null | grep -v "$CRON_MARKER" > "$tmpfile" || true
-    {
-        echo "$CRON_MARKER"
-        [ -n "$clam_cmd" ] && echo "$clam_cmd"
-        echo "0 3 * * 1 sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y && sudo apt clean"
-        echo "0 4 * * 1 sudo bash -c '[ -f /var/run/reboot-required ] && reboot'"
-    } >> "$tmpfile"
-    crontab "$tmpfile"
-    rm -f "$tmpfile"
-}
+    CLAM_CRON="0 3 * * *"
+    [[ "$CLAM_FREQ" == "2" ]] && CLAM_CRON="0 3 * * 1"
+    CLAM_CMD="$CLAM_CRON /usr/bin/clamdscan --fdpass -r / --exclude-dir='^/sys|^/proc|^/dev|^/var/lib/docker' -i --log=/var/log/clamav/daily_scan.log"
+fi
 
-# --- MAIN EXECUTION ---
-echo "--- Welcome to the Coolify VPS Wizard ---"
-setup_swap
-setup_ufw_basic
-setup_maintenance_cron
+apt install -y unattended-upgrades update-notifier-common
+CRON_MARKER="# EXPERT-VPS-SETUP"
+tmpfile=$(mktemp)
+crontab -l 2>/dev/null | grep -v "$CRON_MARKER" > "$tmpfile" || true
+{
+    echo "$CRON_MARKER"
+    [ -n "$CLAM_CMD" ] && echo "$CLAM_CMD"
+    echo "0 3 * * 1 apt update && apt upgrade -y && apt autoremove -y && apt clean"
+    echo "0 4 * * 1 bash -c '[ -f /var/run/reboot-required ] && reboot'"
+} >> "$tmpfile"
+crontab "$tmpfile"
+rm -f "$tmpfile"
 
-if confirm "Install Coolify now?"; then
+# --- 5. COOLIFY & POST-REBOOT DOCKER PATCH ---
+if [[ "$WANT_COOLIFY" == "y" ]]; then
     echo "--- Installing Coolify ---"
     curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
     
-    # STAGE 2: Schedule the Docker Firewall Patch for AFTER reboot
     echo "--- Preparing Post-Reboot Docker Security Patch ---"
-    sudo wget -O /usr/local/bin/ufw-docker https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker
-    sudo chmod +x /usr/local/bin/ufw-docker
+    wget -O /usr/local/bin/ufw-docker https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker
+    chmod +x /usr/local/bin/ufw-docker
     
-    # Add a one-time cron job to run after reboot
+    # Schedule the patch to run 30s after reboot, then remove itself from crontab
     (crontab -l 2>/dev/null; echo "@reboot sleep 30 && /usr/local/bin/ufw-docker install && ufw reload && crontab -l | grep -v '/usr/local/bin/ufw-docker install' | crontab -") | crontab -
-    echo "✅ Docker security patch scheduled to run 30s after reboot."
 fi
 
 echo "--- Setup Finished! Rebooting in 10 seconds ---"
 sleep 10
-sudo reboot
+reboot
