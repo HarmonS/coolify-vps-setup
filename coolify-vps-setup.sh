@@ -1,5 +1,5 @@
 #!/bin/bash
-# coolify-vps-setup.sh - Optimized Modular Setup
+# coolify-vps-setup.sh - Two-Stage Interactive Setup
 
 set -euo pipefail
 
@@ -27,9 +27,7 @@ confirm() {
 setup_swap() {
     if confirm "Do you want to configure a Swap file?"; then
         local swap_size=$(get_input "How much Swap? (e.g., 2G, 4G)" "2G")
-        if [ -f /swapfile ]; then
-            echo "✅ Swapfile already exists. Skipping."
-        else
+        if [ ! -f /swapfile ]; then
             echo "--- Creating $swap_size Swap File ---"
             sudo fallocate -l "$swap_size" /swapfile
             sudo chmod 600 /swapfile
@@ -43,12 +41,11 @@ setup_swap() {
     fi
 }
 
-# --- 2. FIREWALL & FAIL2BAN (Basic Setup) ---
+# --- 2. FIREWALL & FAIL2BAN ---
 setup_ufw_basic() {
     if confirm "Do you want to configure Firewall & Fail2ban?"; then
         echo "--- Installing Security Tools ---"
         sudo apt update && sudo apt install -y ufw wget fail2ban
-        
         sudo ufw default deny incoming
         sudo ufw default allow outgoing
         sudo ufw allow 22/tcp
@@ -85,6 +82,7 @@ setup_maintenance_cron() {
     fi
 
     sudo apt install -y unattended-upgrades update-notifier-common
+    
     CRON_MARKER="# EXPERT-VPS-SETUP"
     tmpfile=$(mktemp)
     crontab -l 2>/dev/null | grep -v "$CRON_MARKER" > "$tmpfile" || true
@@ -96,7 +94,6 @@ setup_maintenance_cron() {
     } >> "$tmpfile"
     crontab "$tmpfile"
     rm -f "$tmpfile"
-    echo "✅ Maintenance tasks scheduled."
 }
 
 # --- MAIN EXECUTION ---
@@ -106,27 +103,17 @@ setup_ufw_basic
 setup_maintenance_cron
 
 if confirm "Install Coolify now?"; then
-    echo "--- Installing Coolify (this will install Docker) ---"
+    echo "--- Installing Coolify ---"
     curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
     
-    # Wait for Docker to initialize and refresh the shell's command path
-    echo "--- Refreshing system paths ---"
-    sleep 5
-    hash -r 
-
-    # Check if Docker exists before running the patch
-    if command -v docker >/dev/null 2>&1; then
-        echo "--- Applying ufw-docker security patch ---"
-        sudo wget -O /usr/local/bin/ufw-docker https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker
-        sudo chmod +x /usr/local/bin/ufw-docker
-        
-        # Force the install even if the environment is still "warm"
-        sudo /usr/local/bin/ufw-docker install
-        sudo ufw reload
-        echo "✅ Docker security patch applied."
-    else
-        echo "⚠️ Docker not found yet. You may need to run 'sudo ufw-docker install' manually after reboot."
-    fi
+    # STAGE 2: Schedule the Docker Firewall Patch for AFTER reboot
+    echo "--- Preparing Post-Reboot Docker Security Patch ---"
+    sudo wget -O /usr/local/bin/ufw-docker https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker
+    sudo chmod +x /usr/local/bin/ufw-docker
+    
+    # Add a one-time cron job to run after reboot
+    (crontab -l 2>/dev/null; echo "@reboot sleep 30 && /usr/local/bin/ufw-docker install && ufw reload && crontab -l | grep -v '/usr/local/bin/ufw-docker install' | crontab -") | crontab -
+    echo "✅ Docker security patch scheduled to run 30s after reboot."
 fi
 
 echo "--- Setup Finished! Rebooting in 10 seconds ---"
