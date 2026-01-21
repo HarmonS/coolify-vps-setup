@@ -1,11 +1,11 @@
 #!/bin/bash
-# coolify-vps-setup.sh - Modular, Interactive & Secured (Optimized with clamdscan)
+# coolify-vps-setup.sh - Modular, Interactive & Secured
 
 set -euo pipefail
 
 # --- 0. ROOT CHECK ---
 if [[ $EUID -ne 0 ]]; then
-   echo "❌ This script must be run as root. Try: sudo ./coolify-vps-setup.sh"
+   echo "❌ This script must be run as root."
    exit 1
 fi
 
@@ -45,52 +45,47 @@ setup_swap() {
 
 # --- 2. FIREWALL & BRUTE-FORCE SECURITY ---
 setup_ufw_docker() {
-    echo "--- Configuring UFW, ufw-docker & Fail2ban ---"
-    sudo apt update && sudo apt install -y ufw wget fail2ban
-    
-    # Install ufw-docker patch
-    sudo wget -O /usr/local/bin/ufw-docker https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker
-    sudo chmod +x /usr/local/bin/ufw-docker
-    sudo ufw-docker install
-    
-    # Configure Fail2ban for SSH (Bantime: 24h, Retries: 3)
-    sudo cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
-    sudo sed -i 's/^bantime  = 10m/bantime  = 24h/' /etc/fail2ban/jail.local
-    sudo sed -i 's/^maxretry = 5/maxretry = 3/' /etc/fail2ban/jail.local
-    sudo systemctl restart fail2ban
+    if confirm "Do you want to configure Firewall & Fail2ban?"; then
+        echo "--- Configuring UFW, ufw-docker & Fail2ban ---"
+        sudo apt update && sudo apt install -y ufw wget fail2ban
+        
+        # 1. Set Policies & Enable UFW FIRST (Required for ufw-docker)
+        sudo ufw default deny incoming
+        sudo ufw default allow outgoing
+        sudo ufw allow 22/tcp
+        sudo ufw allow 80/tcp
+        sudo ufw allow 443/tcp
+        sudo ufw allow 8000/tcp
+        sudo ufw allow 6001/tcp
+        sudo ufw allow 6002/tcp
+        sudo ufw --force enable
 
-    # Strict Default Policies
-    sudo ufw default deny incoming
-    sudo ufw default allow outgoing
-    
-    # Allow Essential Ports
-    sudo ufw allow 22/tcp      # SSH
-    sudo ufw allow 80/tcp      # HTTP
-    sudo ufw allow 443/tcp     # HTTPS
-    sudo ufw allow 8000/tcp    # Coolify UI
-    sudo ufw allow 6001/tcp    # Coolify Real-time
-    sudo ufw allow 6002/tcp    # Coolify Terminal
-    
-    sudo ufw --force enable
-    echo "✅ Firewall and Fail2ban secured."
+        # 2. Now install ufw-docker patch
+        sudo wget -O /usr/local/bin/ufw-docker https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker
+        sudo chmod +x /usr/local/bin/ufw-docker
+        sudo ufw-docker install
+        
+        # 3. Configure Fail2ban
+        sudo cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
+        sudo sed -i 's/^bantime  = 10m/bantime  = 24h/' /etc/fail2ban/jail.local
+        sudo sed -i 's/^maxretry = 5/maxretry = 3/' /etc/fail2ban/jail.local
+        sudo systemctl restart fail2ban
+
+        echo "✅ Firewall and Fail2ban secured."
+    fi
 }
 
 # --- 3. MAINTENANCE & OPTIMIZED CLAMAV ---
 setup_maintenance_cron() {
     echo "--- Configuring Maintenance & Cron Jobs ---"
-    
     local clam_cmd=""
 
     if confirm "Do you want to install ClamAV for malware scanning?"; then
         sudo apt install -y clamav clamav-daemon
-        
-        # Proper ClamAV Initialization (Standard Fix for locked databases)
         echo "   -> Updating ClamAV signatures..."
         sudo systemctl stop clamav-freshclam || true
         sudo freshclam
         sudo systemctl start clamav-freshclam
-        
-        # Ensure the daemon is enabled and running for clamdscan to work
         sudo systemctl enable clamav-daemon
         sudo systemctl start clamav-daemon
 
@@ -98,35 +93,26 @@ setup_maintenance_cron() {
         local clam_cron="0 3 * * *"
         [[ "$freq_choice" == "2" ]] && clam_cron="0 3 * * 1"
         
-        # OPTIMIZED: Using clamdscan for better performance via the daemon
         clam_cmd="$clam_cron /usr/bin/clamdscan --fdpass -r / --exclude-dir='^/sys|^/proc|^/dev|^/var/lib/docker' -i --log=/var/log/clamav/daily_scan.log"
-        echo "✅ ClamAV scheduled with clamdscan optimization."
+        echo "✅ ClamAV scheduled."
     fi
 
-    # Unattended Upgrades for Security Kernel Patches
-    echo "--- Configuring Unattended Upgrades ---"
+    # Unattended Upgrades
     sudo apt install -y unattended-upgrades update-notifier-common
     sudo dpkg-reconfigure -f noninteractive unattended-upgrades
-    sudo sed -i 's#//Unattended-Upgrade::Automatic-Reboot "false";#Unattended-Upgrade::Automatic-Reboot "true";#' /etc/apt/apt.conf.d/50unattended-upgrades
-    sudo sed -i 's#//Unattended-Upgrade::Automatic-Reboot-Time "02:00";#Unattended-Upgrade::Automatic-Reboot-Time "05:00";#' /etc/apt/apt.conf.d/50unattended-upgrades
 
-    # CRON MARKER LOGIC (Duplicate Protection)
+    # CRON MARKER LOGIC
     CRON_MARKER="# EXPERT-VPS-SETUP"
     tmpfile=$(mktemp)
     crontab -l 2>/dev/null | grep -v "$CRON_MARKER" > "$tmpfile" || true
-
     {
         echo "$CRON_MARKER"
         [ -n "$clam_cmd" ] && echo "$clam_cmd"
-        # Weekly Full Upgrade/Cleanup (Monday 03:00 AM)
         echo "0 3 * * 1 sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y && sudo apt clean"
-        # Weekly Conditional Reboot (Monday 04:00 AM)
         echo "0 4 * * 1 sudo bash -c '[ -f /var/run/reboot-required ] && reboot'"
     } >> "$tmpfile"
-
     crontab "$tmpfile"
     rm -f "$tmpfile"
-    echo "✅ Maintenance cron jobs applied."
 }
 
 # --- MAIN EXECUTION ---
